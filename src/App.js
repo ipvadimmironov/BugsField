@@ -3,9 +3,12 @@
   const BUG_DRAW_HEIGHT = 151;
   const BUG_HITBOX_WIDTH = 150;
   const BUG_HITBOX_HEIGHT = 151;
+  const BACKGROUND_IMAGE_SRC = "background.png";
   const MAGNIFIER_IMAGE_SRC = "magnifier.png";
   const MAGNIFIER_HOTSPOT_X = 285;
   const MAGNIFIER_HOTSPOT_Y = 268;
+  const MAGNIFIER_RADIUS = 240;
+  const MAGNIFIER_ZOOM = 1.9;
   const SHOW_COLLISION_DEBUG = false;
   const HITBOX_OVERLAP_ALLOWANCE = 38;
   const TWO_PI = Math.PI * 2;
@@ -21,7 +24,7 @@
   const BLOCKED_TURN_MIN_INTERVAL = 0.05;
   const BLOCKED_TURN_MAX_INTERVAL = 0.18;
   const BUG_COUNT = 10;
-  const BUG_ZOOMS = [1, 1.1, 0.9, 1.2];
+  const BUG_ZOOMS = [0.5, 0.6, 0.7, 0.8];//[1, 1.1, 0.9, 1.2];
   const SPAWN_ATTEMPTS = 100;
   const SPRITE_FRAMES = [
     { x: 0, y: 0, w: 270, h: 272 },
@@ -48,13 +51,17 @@
   app.replaceChildren(canvas);
 
   const context = canvas.getContext("2d");
+  const sceneCanvas = document.createElement("canvas");
+  const sceneContext = sceneCanvas.getContext("2d");
   const simulation = createBugSimulation();
   let animationFrameId = 0;
   let lastTime = performance.now();
+  let backgroundImage = null;
   let spriteImage = null;
   let magnifierImage = null;
   let pointerPosition = null;
   let isPointerInsideCanvas = false;
+  let devicePixelRatio = window.devicePixelRatio || 1;
   let viewport = {
     width: window.innerWidth,
     height: window.innerHeight,
@@ -62,6 +69,7 @@
 
   function resizeCanvas() {
     const dpr = window.devicePixelRatio || 1;
+    devicePixelRatio = dpr;
     const width = window.innerWidth;
     const height = window.innerHeight;
     viewport = { width, height };
@@ -70,18 +78,26 @@
     canvas.height = Math.round(height * dpr);
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
+    sceneCanvas.width = canvas.width;
+    sceneCanvas.height = canvas.height;
 
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    sceneContext.setTransform(dpr, 0, 0, dpr, 0, 0);
     simulation.resize(width, height);
   }
 
-  function draw() {
-    context.fillStyle = "#2f2f33";
-    context.fillRect(0, 0, viewport.width, viewport.height);
-
-    if (!spriteImage) {
+  function drawScene(targetContext) {
+    if (!backgroundImage || !spriteImage) {
+      targetContext.fillStyle = "#2f2f33";
+      targetContext.fillRect(0, 0, viewport.width, viewport.height);
       return;
     }
+
+    targetContext.drawImage(
+      backgroundImage,
+      0,
+      0,
+    );
 
     const bugs = simulation.getState();
 
@@ -90,10 +106,10 @@
       const drawWidth = BUG_DRAW_WIDTH * bug.zoom;
       const drawHeight = BUG_DRAW_HEIGHT * bug.zoom;
 
-      context.save();
-      context.translate(bug.position.x, bug.position.y);
-      context.rotate(bug.rotation);
-      context.drawImage(
+      targetContext.save();
+      targetContext.translate(bug.position.x, bug.position.y);
+      targetContext.rotate(bug.rotation);
+      targetContext.drawImage(
         spriteImage,
         frame.x,
         frame.y,
@@ -104,23 +120,47 @@
         drawWidth,
         drawHeight,
       );
-      context.restore();
+      targetContext.restore();
     });
 
     if (SHOW_COLLISION_DEBUG) {
       bugs.forEach((bug, index) => {
-        drawDebugRect(context, bug.debug && bug.debug.currentRect, "#00ff88", "rgba(0, 255, 136, 0.16)");
+        drawDebugRect(targetContext, bug.debug && bug.debug.currentRect, "#00ff88", "rgba(0, 255, 136, 0.16)");
         drawDebugRect(
-          context,
+          targetContext,
           bug.debug && bug.debug.nextRect,
           bug.debug && bug.debug.canMove ? "#00b7ff" : "#ff4d4d",
           bug.debug && bug.debug.canMove
             ? "rgba(0, 183, 255, 0.16)"
             : "rgba(255, 77, 77, 0.2)",
         );
-        drawDebugLabel(context, bug, index);
+        drawDebugLabel(targetContext, bug, index);
       });
-      drawDebugHud(context, bugs);
+      drawDebugHud(targetContext, bugs);
+    }
+  }
+
+  function draw() {
+    drawScene(sceneContext);
+    context.clearRect(0, 0, viewport.width, viewport.height);
+    context.drawImage(
+      sceneCanvas,
+      0,
+      0,
+      sceneCanvas.width,
+      sceneCanvas.height,
+      0,
+      0,
+      viewport.width,
+      viewport.height,
+    );
+
+    if (!backgroundImage || !spriteImage) {
+      return;
+    }
+
+    if (isPointerInsideCanvas && pointerPosition) {
+      drawMagnifierView(context, sceneCanvas, pointerPosition.x, pointerPosition.y);
     }
 
     if (magnifierImage && isPointerInsideCanvas && pointerPosition) {
@@ -163,10 +203,12 @@
   });
 
   Promise.all([
+    loadImage(BACKGROUND_IMAGE_SRC),
     loadImage("./walkingsprite.png"),
     loadImage(MAGNIFIER_IMAGE_SRC),
   ])
-    .then(function ([loadedSpriteImage, loadedMagnifierImage]) {
+    .then(function ([loadedBackgroundImage, loadedSpriteImage, loadedMagnifierImage]) {
+      backgroundImage = loadedBackgroundImage;
       spriteImage = loadedSpriteImage;
       magnifierImage = loadedMagnifierImage;
       draw();
@@ -617,6 +659,40 @@
       image.onerror = reject;
       image.src = src;
     });
+  }
+
+  function drawMagnifierView(targetContext, sourceCanvas, centerX, centerY) {
+    const sourceRadius = (MAGNIFIER_RADIUS / MAGNIFIER_ZOOM) * devicePixelRatio;
+    const sourceCenterX = centerX * devicePixelRatio;
+    const sourceCenterY = centerY * devicePixelRatio;
+    const sourceDiameter = sourceRadius * 2;
+    const sourceX = clamp(
+      sourceCenterX - sourceRadius,
+      0,
+      Math.max(0, sourceCanvas.width - sourceDiameter),
+    );
+    const sourceY = clamp(
+      sourceCenterY - sourceRadius,
+      0,
+      Math.max(0, sourceCanvas.height - sourceDiameter),
+    );
+
+    targetContext.save();
+    targetContext.beginPath();
+    targetContext.arc(centerX, centerY, MAGNIFIER_RADIUS, 0, TWO_PI);
+    targetContext.clip();
+    targetContext.drawImage(
+      sourceCanvas,
+      sourceX,
+      sourceY,
+      sourceDiameter,
+      sourceDiameter,
+      centerX - MAGNIFIER_RADIUS,
+      centerY - MAGNIFIER_RADIUS,
+      MAGNIFIER_RADIUS * 2,
+      MAGNIFIER_RADIUS * 2,
+    );
+    targetContext.restore();
   }
 
   function drawDebugRect(ctx, rect, color, fillColor) {
