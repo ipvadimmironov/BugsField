@@ -9,6 +9,8 @@
   const MAGNIFIER_HOTSPOT_Y = 268;
   const MAGNIFIER_RADIUS = 240;
   const MAGNIFIER_ZOOM = 1.9;
+  const BUG_MAX_HEALTH = 100;
+  const MAGNIFIER_DAMAGE_PER_SECOND = 35;
   const SHOW_COLLISION_DEBUG = false;
   const HITBOX_OVERLAP_ALLOWANCE = 38;
   const TWO_PI = Math.PI * 2;
@@ -121,6 +123,12 @@
         drawHeight,
       );
       targetContext.restore();
+    });
+
+    bugs.forEach((bug) => {
+      if (isBugInsideMagnifier(bug)) {
+        drawBugHealth(targetContext, bug);
+      }
     });
 
     if (SHOW_COLLISION_DEBUG) {
@@ -249,6 +257,14 @@
       },
 
       update(deltaSeconds) {
+        damageBugsUnderMagnifier(state.bugs, deltaSeconds);
+        state.bugs = state.bugs.filter((bug) => bug.health > 0);
+
+        if (state.bugs.length === 0) {
+          state.debug = [];
+          return;
+        }
+
         const snapshot = state.bugs.map(createSnapshot);
         const intents = snapshot.map((bug, index) =>
           createNextIntent(
@@ -309,6 +325,7 @@
           frameIndex: bug.frameIndex,
           zoom: bug.zoom,
           hue: bug.hue,
+          health: bug.health,
           debug: state.debug[index] || null,
         }));
       },
@@ -363,6 +380,7 @@
       turnCooldown: randomRange(RANDOM_TURN_MIN_INTERVAL, RANDOM_TURN_MAX_INTERVAL),
       blockedFrames: 0,
       blockedTurnDirection: 0,
+      health: BUG_MAX_HEALTH,
       zoom: BUG_ZOOMS[Math.floor(Math.random() * BUG_ZOOMS.length)],
       hue: Math.round(randomRange(0, 360)),
     };
@@ -376,6 +394,7 @@
       turnCooldown: bug.turnCooldown,
       blockedFrames: bug.blockedFrames,
       blockedTurnDirection: bug.blockedTurnDirection,
+      health: bug.health,
       zoom: bug.zoom,
       rect: getBugRect(bug.position, bug.zoom),
     };
@@ -661,6 +680,27 @@
     });
   }
 
+  function damageBugsUnderMagnifier(bugs, deltaSeconds) {
+    bugs.forEach((bug) => {
+      if (isBugInsideMagnifier(bug)) {
+        bug.health = Math.max(
+          0,
+          bug.health - MAGNIFIER_DAMAGE_PER_SECOND * deltaSeconds,
+        );
+      }
+    });
+  }
+
+  function isBugInsideMagnifier(bug) {
+    if (!isPointerInsideCanvas || !pointerPosition) {
+      return false;
+    }
+
+    const dx = bug.position.x - pointerPosition.x;
+    const dy = bug.position.y - pointerPosition.y;
+    return Math.hypot(dx, dy) <= MAGNIFIER_RADIUS;
+  }
+
   function drawMagnifierView(targetContext, sourceCanvas, centerX, centerY) {
     const sourceRadius = (MAGNIFIER_RADIUS / MAGNIFIER_ZOOM) * devicePixelRatio;
     const sourceCenterX = centerX * devicePixelRatio;
@@ -692,6 +732,22 @@
       MAGNIFIER_RADIUS * 2,
       MAGNIFIER_RADIUS * 2,
     );
+    targetContext.restore();
+  }
+
+  function drawBugHealth(targetContext, bug) {
+    targetContext.save();
+    targetContext.fillStyle = "#ffffff";
+    targetContext.strokeStyle = "rgba(0, 0, 0, 0.7)";
+    targetContext.lineWidth = 3;
+    targetContext.font = "bold 18px sans-serif";
+    targetContext.textAlign = "center";
+    targetContext.textBaseline = "bottom";
+    const label = `${Math.ceil(bug.health)}%`;
+    const x = bug.position.x;
+    const y = bug.position.y - BUG_DRAW_HEIGHT * bug.zoom * 0.6;
+    targetContext.strokeText(label, x, y);
+    targetContext.fillText(label, x, y);
     targetContext.restore();
   }
 
