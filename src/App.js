@@ -3,6 +3,9 @@
   const BUG_DRAW_HEIGHT = 151;
   const BUG_HITBOX_WIDTH = 150;
   const BUG_HITBOX_HEIGHT = 151;
+  const MAGNIFIER_IMAGE_SRC = "magnifier.png";
+  const MAGNIFIER_HOTSPOT_X = 285;
+  const MAGNIFIER_HOTSPOT_Y = 268;
   const SHOW_COLLISION_DEBUG = false;
   const HITBOX_OVERLAP_ALLOWANCE = 38;
   const TWO_PI = Math.PI * 2;
@@ -41,6 +44,7 @@
   const canvas = document.createElement("canvas");
   canvas.className = "game-canvas";
   canvas.setAttribute("aria-label", "Bug playground");
+  canvas.style.cursor = "none";
   app.replaceChildren(canvas);
 
   const context = canvas.getContext("2d");
@@ -48,6 +52,9 @@
   let animationFrameId = 0;
   let lastTime = performance.now();
   let spriteImage = null;
+  let magnifierImage = null;
+  let pointerPosition = null;
+  let isPointerInsideCanvas = false;
   let viewport = {
     width: window.innerWidth,
     height: window.innerHeight,
@@ -115,6 +122,14 @@
       });
       drawDebugHud(context, bugs);
     }
+
+    if (magnifierImage && isPointerInsideCanvas && pointerPosition) {
+      context.drawImage(
+        magnifierImage,
+        pointerPosition.x - MAGNIFIER_HOTSPOT_X,
+        pointerPosition.y - MAGNIFIER_HOTSPOT_Y,
+      );
+    }
   }
 
   function tick(now) {
@@ -131,10 +146,29 @@
   window.addEventListener("beforeunload", function () {
     window.cancelAnimationFrame(animationFrameId);
   });
+  canvas.addEventListener("mouseenter", function () {
+    isPointerInsideCanvas = true;
+  });
+  canvas.addEventListener("mousemove", function (event) {
+    const rect = canvas.getBoundingClientRect();
+    isPointerInsideCanvas = true;
+    pointerPosition = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+  });
+  canvas.addEventListener("mouseleave", function () {
+    isPointerInsideCanvas = false;
+    pointerPosition = null;
+  });
 
-  loadImage("./walkingsprite.png")
-    .then(function (loadedImage) {
-      spriteImage = loadedImage;
+  Promise.all([
+    loadImage("./walkingsprite.png"),
+    loadImage(MAGNIFIER_IMAGE_SRC),
+  ])
+    .then(function ([loadedSpriteImage, loadedMagnifierImage]) {
+      spriteImage = loadedSpriteImage;
+      magnifierImage = loadedMagnifierImage;
       draw();
       animationFrameId = window.requestAnimationFrame(tick);
     })
@@ -321,7 +355,15 @@
     let turnCooldown = bug.turnCooldown - deltaSeconds;
     let targetRotation = bug.targetRotation;
 
-    if (turnCooldown <= 0) {
+    if (bug.blockedTurnDirection !== 0) {
+      targetRotation = normalizeAngle(
+        bug.rotation + bug.blockedTurnDirection * (Math.PI / 2),
+      );
+      turnCooldown = randomRange(
+        BLOCKED_TURN_MIN_INTERVAL,
+        BLOCKED_TURN_MAX_INTERVAL,
+      );
+    } else if (turnCooldown <= 0) {
       targetRotation = normalizeAngle(
         bug.rotation + randomRange(-Math.PI / 2, Math.PI / 2),
       );
@@ -332,7 +374,9 @@
     }
 
     targetRotation = steerAwayFromEdges(bug, bounds, targetRotation);
-    targetRotation = steerAwayFromBugs(bug, otherBugs, targetRotation);
+    if (bug.blockedTurnDirection === 0) {
+      targetRotation = steerAwayFromBugs(bug, otherBugs, targetRotation);
+    }
 
     const turnSpeed =
       bug.blockedFrames > 0 ? BLOCKED_TURN_SPEED : TURN_SPEED;
