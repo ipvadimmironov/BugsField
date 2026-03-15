@@ -5,6 +5,10 @@
   const BUG_HITBOX_HEIGHT = 151;
   const BACKGROUND_IMAGE_SRC = "background.png";
   const MAGNIFIER_IMAGE_SRC = "magnifier.png";
+  const HEALTH_100_IMAGE_SRC = "health100.png";
+  const HEALTH_80_IMAGE_SRC = "health80.png";
+  const HEALTH_40_IMAGE_SRC = "health40.png";
+  const HEALTH_0_IMAGE_SRC = "health0.png";
   const MAGNIFIER_SCALE = 0.5;
   const MAGNIFIER_HOTSPOT_X = 142.5;
   const MAGNIFIER_HOTSPOT_Y = 134;
@@ -12,6 +16,7 @@
   const MAGNIFIER_ZOOM = 1.9;
   const BUG_MAX_HEALTH = 100;
   const MAGNIFIER_DAMAGE_PER_SECOND = 35;
+  const DEATH_ANIMATION_DURATION = 0.5;
   const SHOW_COLLISION_DEBUG = false;
   const HITBOX_OVERLAP_ALLOWANCE = 38;
   const TWO_PI = Math.PI * 2;
@@ -30,18 +35,13 @@
   const BUG_COUNT = 10;
   const BUG_ZOOMS = [0.5, 0.6, 0.7, 0.8];//[1, 1.1, 0.9, 1.2];
   const SPAWN_ATTEMPTS = 100;
-  const SPRITE_FRAMES = [
-    { x: 0, y: 0, w: 270, h: 272 },
-    { x: 270, y: 0, w: 270, h: 272 },
-    { x: 540, y: 0, w: 270, h: 272 },
-    { x: 810, y: 0, w: 270, h: 272 },
-    { x: 1080, y: 0, w: 270, h: 272 },
-    { x: 1350, y: 0, w: 270, h: 272 },
-    { x: 1620, y: 0, w: 270, h: 272 },
-    { x: 1890, y: 0, w: 270, h: 272 },
-    { x: 2160, y: 0, w: 270, h: 272 },
-    { x: 2430, y: 0, w: 270, h: 272 },
-  ];
+  const SPRITE_FRAMES = Array.from({ length: 13 }, (_, index) => ({
+    x: index * 270,
+    y: 0,
+    w: 270,
+    h: 272,
+  }));
+  const DEATH_FRAMES = [7, 8, 9, 10, 11, 12];
 
   const app = document.getElementById("app");
   if (!app) {
@@ -61,7 +61,7 @@
   let animationFrameId = 0;
   let lastTime = performance.now();
   let backgroundImage = null;
-  let spriteImage = null;
+  let bugSpriteImages = null;
   let magnifierImage = null;
   let pointerPosition = null;
   let isPointerInsideCanvas = false;
@@ -91,7 +91,7 @@
   }
 
   function drawScene(targetContext) {
-    if (!backgroundImage || !spriteImage) {
+    if (!backgroundImage || !bugSpriteImages) {
       targetContext.fillStyle = "#2f2f33";
       targetContext.fillRect(0, 0, viewport.width, viewport.height);
       return;
@@ -106,7 +106,8 @@
     const bugs = simulation.getState();
 
     bugs.forEach((bug) => {
-      const frame = SPRITE_FRAMES[bug.frameIndex];
+      const frame = SPRITE_FRAMES[bug.renderFrameIndex];
+      const bugSpriteImage = bugSpriteImages[bug.spriteKey];
       const drawWidth = BUG_DRAW_WIDTH * bug.zoom;
       const drawHeight = BUG_DRAW_HEIGHT * bug.zoom;
 
@@ -114,7 +115,7 @@
       targetContext.translate(bug.position.x, bug.position.y);
       targetContext.rotate(bug.rotation);
       targetContext.drawImage(
-        spriteImage,
+        bugSpriteImage,
         frame.x,
         frame.y,
         frame.w,
@@ -128,7 +129,9 @@
     });
 
     bugs.forEach((bug) => {
-      drawBugHealth(targetContext, bug);
+      if (!bug.isDying) {
+        drawBugHealth(targetContext, bug);
+      }
     });
 
     if (SHOW_COLLISION_DEBUG) {
@@ -163,7 +166,7 @@
       viewport.height,
     );
 
-    if (!backgroundImage || !spriteImage) {
+    if (!backgroundImage || !bugSpriteImages) {
       return;
     }
 
@@ -214,18 +217,33 @@
 
   Promise.all([
     loadImage(BACKGROUND_IMAGE_SRC),
-    loadImage("./walkingsprite.png"),
+    loadImage(HEALTH_100_IMAGE_SRC),
+    loadImage(HEALTH_80_IMAGE_SRC),
+    loadImage(HEALTH_40_IMAGE_SRC),
+    loadImage(HEALTH_0_IMAGE_SRC),
     loadImage(MAGNIFIER_IMAGE_SRC),
   ])
-    .then(function ([loadedBackgroundImage, loadedSpriteImage, loadedMagnifierImage]) {
+    .then(function ([
+      loadedBackgroundImage,
+      loadedHealth100Image,
+      loadedHealth80Image,
+      loadedHealth40Image,
+      loadedHealth0Image,
+      loadedMagnifierImage,
+    ]) {
       backgroundImage = loadedBackgroundImage;
-      spriteImage = loadedSpriteImage;
+      bugSpriteImages = {
+        health100: loadedHealth100Image,
+        health80: loadedHealth80Image,
+        health40: loadedHealth40Image,
+        health0: loadedHealth0Image,
+      };
       magnifierImage = loadedMagnifierImage;
       draw();
       animationFrameId = window.requestAnimationFrame(tick);
     })
     .catch(function (error) {
-      console.error("Failed to load bug sprite", error);
+      console.error("Failed to load game assets", error);
     });
 
   function createBugSimulation() {
@@ -260,14 +278,34 @@
 
       update(deltaSeconds) {
         damageBugsUnderMagnifier(state.bugs, deltaSeconds);
-        state.bugs = state.bugs.filter((bug) => bug.health > 0);
+        state.bugs.forEach((bug) => {
+          if (!bug.isDying && bug.health <= 0) {
+            startBugDeath(bug);
+          }
+        });
+        state.bugs.forEach((bug) => {
+          if (bug.isDying) {
+            updateBugDeath(bug, deltaSeconds);
+          }
+        });
+        state.bugs = state.bugs.filter((bug) => !bug.isDead);
 
         if (state.bugs.length === 0) {
           state.debug = [];
           return;
         }
 
-        const snapshot = state.bugs.map(createSnapshot);
+        const activeBugEntries = state.bugs
+          .map((bug, index) => ({ bug, index }))
+          .filter(({ bug }) => !bug.isDying);
+        const activeBugs = activeBugEntries.map(({ bug }) => bug);
+
+        if (activeBugs.length === 0) {
+          state.debug = state.bugs.map(() => null);
+          return;
+        }
+
+        const snapshot = activeBugs.map(createSnapshot);
         const intents = snapshot.map((bug, index) =>
           createNextIntent(
             bug,
@@ -279,16 +317,17 @@
         const decisions = intents.map((intent, index) =>
           getMoveDecision(index, intent.nextRect, snapshot, intents, state.bounds),
         );
-        state.debug = intents.map((intent, index) =>
-          createDebugEntry({
-            currentRect: snapshot[index].rect,
-            nextRect: intent.nextRect,
-            nextPosition: intent.position,
-            decision: decisions[index],
-          }),
-        );
+        state.debug = state.bugs.map(() => null);
+        activeBugEntries.forEach(({ index }, activeIndex) => {
+          state.debug[index] = createDebugEntry({
+            currentRect: snapshot[activeIndex].rect,
+            nextRect: intents[activeIndex].nextRect,
+            nextPosition: intents[activeIndex].position,
+            decision: decisions[activeIndex],
+          });
+        });
 
-        state.bugs.forEach((bug, index) => {
+        activeBugs.forEach((bug, index) => {
           const intent = intents[index];
           const decision = decisions[index];
           bug.rotation = intent.rotation;
@@ -330,10 +369,12 @@
         return state.bugs.map((bug, index) => ({
           position: { ...bug.position },
           rotation: bug.rotation,
-          frameIndex: bug.frameIndex,
+          renderFrameIndex: bug.isDying ? bug.deathFrameIndex : bug.frameIndex,
+          spriteKey: bug.spriteKey,
           zoom: bug.zoom,
           hue: bug.hue,
           health: bug.health,
+          isDying: bug.isDying,
           debug: state.debug[index] || null,
         }));
       },
@@ -390,6 +431,11 @@
       stationaryTime: 0,
       blockedTurnDirection: 0,
       health: BUG_MAX_HEALTH,
+      spriteKey: "health100",
+      isDying: false,
+      isDead: false,
+      deathTimer: 0,
+      deathFrameIndex: DEATH_FRAMES[0],
       zoom: BUG_ZOOMS[Math.floor(Math.random() * BUG_ZOOMS.length)],
       hue: Math.round(randomRange(0, 360)),
     };
@@ -405,6 +451,7 @@
       stationaryTime: bug.stationaryTime,
       blockedTurnDirection: bug.blockedTurnDirection,
       health: bug.health,
+      spriteKey: bug.spriteKey,
       zoom: bug.zoom,
       rect: getBugRect(bug.position, bug.zoom),
     };
@@ -686,6 +733,48 @@
     return min + Math.random() * (max - min);
   }
 
+  function getSpriteKeyForHealth(health) {
+    if (health >= BUG_MAX_HEALTH) {
+      return "health100";
+    }
+    if (health >= 80) {
+      return "health80";
+    }
+    if (health > 40) {
+      return "health40";
+    }
+    return "health0";
+  }
+
+  function advanceWalkSpriteFrame(bug) {
+    const currentIndex = WALK_FRAMES.indexOf(bug.frameIndex);
+    const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % WALK_FRAMES.length;
+    bug.frameIndex = WALK_FRAMES[nextIndex];
+  }
+
+  function startBugDeath(bug) {
+    bug.health = 0;
+    bug.isDying = true;
+    bug.isDead = false;
+    bug.deathTimer = 0;
+    bug.deathFrameIndex = DEATH_FRAMES[0];
+    bug.spriteKey = "health0";
+    bug.blockedFrames = 0;
+    bug.stationaryTime = 0;
+    bug.blockedTurnDirection = 0;
+  }
+
+  function updateBugDeath(bug, deltaSeconds) {
+    bug.deathTimer += deltaSeconds;
+    const progress = clamp(bug.deathTimer / DEATH_ANIMATION_DURATION, 0, 0.999999);
+    const deathFrameCursor = Math.floor(progress * DEATH_FRAMES.length);
+    bug.deathFrameIndex = DEATH_FRAMES[deathFrameCursor];
+
+    if (bug.deathTimer >= DEATH_ANIMATION_DURATION) {
+      bug.isDead = true;
+    }
+  }
+
   function loadImage(src) {
     return new Promise((resolve, reject) => {
       const image = new Image();
@@ -697,11 +786,20 @@
 
   function damageBugsUnderMagnifier(bugs, deltaSeconds) {
     bugs.forEach((bug) => {
+      if (bug.isDying) {
+        return;
+      }
+
       if (isBugInsideMagnifier(bug)) {
         bug.health = Math.max(
           0,
           bug.health - MAGNIFIER_DAMAGE_PER_SECOND * deltaSeconds,
         );
+        const nextSpriteKey = getSpriteKeyForHealth(bug.health);
+        if (nextSpriteKey !== bug.spriteKey) {
+          bug.spriteKey = nextSpriteKey;
+          advanceWalkSpriteFrame(bug);
+        }
       }
     });
   }
