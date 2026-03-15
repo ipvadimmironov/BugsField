@@ -5,9 +5,10 @@
   const BUG_HITBOX_HEIGHT = 151;
   const BACKGROUND_IMAGE_SRC = "background.png";
   const MAGNIFIER_IMAGE_SRC = "magnifier.png";
-  const MAGNIFIER_HOTSPOT_X = 285;
-  const MAGNIFIER_HOTSPOT_Y = 268;
-  const MAGNIFIER_RADIUS = 240;
+  const MAGNIFIER_SCALE = 0.5;
+  const MAGNIFIER_HOTSPOT_X = 142.5;
+  const MAGNIFIER_HOTSPOT_Y = 134;
+  const MAGNIFIER_RADIUS = 120;
   const MAGNIFIER_ZOOM = 1.9;
   const BUG_MAX_HEALTH = 100;
   const MAGNIFIER_DAMAGE_PER_SECOND = 35;
@@ -25,6 +26,7 @@
   const RANDOM_TURN_MAX_INTERVAL = 4.5;
   const BLOCKED_TURN_MIN_INTERVAL = 0.05;
   const BLOCKED_TURN_MAX_INTERVAL = 0.18;
+  const STUCK_SPIN_UNLOCK_SECONDS = 2;
   const BUG_COUNT = 10;
   const BUG_ZOOMS = [0.5, 0.6, 0.7, 0.8];//[1, 1.1, 0.9, 1.2];
   const SPAWN_ATTEMPTS = 100;
@@ -126,9 +128,7 @@
     });
 
     bugs.forEach((bug) => {
-      if (isBugInsideMagnifier(bug)) {
-        drawBugHealth(targetContext, bug);
-      }
+      drawBugHealth(targetContext, bug);
     });
 
     if (SHOW_COLLISION_DEBUG) {
@@ -176,6 +176,8 @@
         magnifierImage,
         pointerPosition.x - MAGNIFIER_HOTSPOT_X,
         pointerPosition.y - MAGNIFIER_HOTSPOT_Y,
+        magnifierImage.width * MAGNIFIER_SCALE,
+        magnifierImage.height * MAGNIFIER_SCALE,
       );
     }
   }
@@ -296,12 +298,18 @@
           if (decision.canMove) {
             bug.position = intent.position;
             bug.blockedFrames = 0;
+            bug.stationaryTime = 0;
             bug.blockedTurnDirection = 0;
             advanceWalkFrame(bug, deltaSeconds);
           } else {
             bug.blockedFrames += 1;
+            bug.stationaryTime += deltaSeconds;
 
-            if (decision.blockedByCurrent || decision.blockedByNext) {
+            if (
+              decision.blockedByCurrent ||
+              decision.blockedByNext ||
+              bug.stationaryTime >= STUCK_SPIN_UNLOCK_SECONDS
+            ) {
               if (bug.blockedTurnDirection === 0) {
                 bug.blockedTurnDirection = pickBlockedTurnDirection();
               }
@@ -379,6 +387,7 @@
       frameTimer: randomRange(0, WALK_FRAME_DURATION),
       turnCooldown: randomRange(RANDOM_TURN_MIN_INTERVAL, RANDOM_TURN_MAX_INTERVAL),
       blockedFrames: 0,
+      stationaryTime: 0,
       blockedTurnDirection: 0,
       health: BUG_MAX_HEALTH,
       zoom: BUG_ZOOMS[Math.floor(Math.random() * BUG_ZOOMS.length)],
@@ -393,6 +402,7 @@
       targetRotation: bug.targetRotation,
       turnCooldown: bug.turnCooldown,
       blockedFrames: bug.blockedFrames,
+      stationaryTime: bug.stationaryTime,
       blockedTurnDirection: bug.blockedTurnDirection,
       health: bug.health,
       zoom: bug.zoom,
@@ -415,10 +425,15 @@
   function createNextIntent(bug, bounds, otherBugs, deltaSeconds) {
     let turnCooldown = bug.turnCooldown - deltaSeconds;
     let targetRotation = bug.targetRotation;
+    const canFreeSpin = bug.stationaryTime >= STUCK_SPIN_UNLOCK_SECONDS;
 
-    if (bug.blockedTurnDirection !== 0) {
+    if (bug.blockedTurnDirection !== 0 || canFreeSpin) {
       targetRotation = normalizeAngle(
-        bug.rotation + bug.blockedTurnDirection * (Math.PI / 2),
+        bug.rotation +
+          (bug.blockedTurnDirection === 0
+            ? pickBlockedTurnDirection()
+            : bug.blockedTurnDirection) *
+            (Math.PI / 2),
       );
       turnCooldown = randomRange(
         BLOCKED_TURN_MIN_INTERVAL,
@@ -435,12 +450,12 @@
     }
 
     targetRotation = steerAwayFromEdges(bug, bounds, targetRotation);
-    if (bug.blockedTurnDirection === 0) {
+    if (bug.blockedTurnDirection === 0 && !canFreeSpin) {
       targetRotation = steerAwayFromBugs(bug, otherBugs, targetRotation);
     }
 
     const turnSpeed =
-      bug.blockedFrames > 0 ? BLOCKED_TURN_SPEED : TURN_SPEED;
+      bug.blockedFrames > 0 || canFreeSpin ? BLOCKED_TURN_SPEED : TURN_SPEED;
     const rotation = rotateTowards(
       bug.rotation,
       targetRotation,
@@ -736,19 +751,45 @@
   }
 
   function drawBugHealth(targetContext, bug) {
-    targetContext.save();
-    targetContext.fillStyle = "#ffffff";
-    targetContext.strokeStyle = "rgba(0, 0, 0, 0.7)";
-    targetContext.lineWidth = 3;
-    targetContext.font = "bold 18px sans-serif";
-    targetContext.textAlign = "center";
-    targetContext.textBaseline = "bottom";
-    const label = `${Math.ceil(bug.health)}%`;
+    const healthRatio = clamp(bug.health / BUG_MAX_HEALTH, 0, 1);
+    const barWidth = 68;
+    const barHeight = 4;
+    const borderRadius = barHeight / 2;
+    const minInnerWidth = 2;
+    const innerWidth = Math.max(minInnerWidth, barWidth * healthRatio);
     const x = bug.position.x;
-    const y = bug.position.y - BUG_DRAW_HEIGHT * bug.zoom * 0.6;
-    targetContext.strokeText(label, x, y);
-    targetContext.fillText(label, x, y);
+    const y = bug.position.y - BUG_DRAW_HEIGHT * bug.zoom * 0.62;
+    const innerLeft = x - innerWidth / 2;
+    const innerTop = y - barHeight + 10;
+
+    targetContext.save();
+    drawRoundedRectPath(
+      targetContext,
+      innerLeft,
+      innerTop,
+      innerWidth,
+      barHeight,
+      borderRadius,
+    );
+    targetContext.fillStyle = getHealthBarColor(healthRatio);
+    targetContext.fill();
     targetContext.restore();
+  }
+
+  function getHealthBarColor(healthRatio) {
+    const hue = 120 * healthRatio;
+    return `hsl(${hue}deg 90% 50%)`;
+  }
+
+  function drawRoundedRectPath(targetContext, x, y, width, height, radius) {
+    const clampedRadius = Math.min(radius, width / 2, height / 2);
+    targetContext.beginPath();
+    targetContext.moveTo(x + clampedRadius, y);
+    targetContext.arcTo(x + width, y, x + width, y + height, clampedRadius);
+    targetContext.arcTo(x + width, y + height, x, y + height, clampedRadius);
+    targetContext.arcTo(x, y + height, x, y, clampedRadius);
+    targetContext.arcTo(x, y, x + width, y, clampedRadius);
+    targetContext.closePath();
   }
 
   function drawDebugRect(ctx, rect, color, fillColor) {
