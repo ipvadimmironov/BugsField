@@ -968,8 +968,8 @@
 
   function getDefaultMagnifierPosition() {
     return clampPointerPosition({
-      x: MAGNIFIER_HOTSPOT_X,
-      y: MAGNIFIER_HOTSPOT_Y,
+      x: 0,
+      y: 0,
     });
   }
 
@@ -1020,24 +1020,9 @@
       };
     }
 
-    const magnifierDrawWidth = magnifierImage
-      ? magnifierImage.width * MAGNIFIER_SCALE
-      : MAGNIFIER_RADIUS * 2;
-    const magnifierDrawHeight = magnifierImage
-      ? magnifierImage.height * MAGNIFIER_SCALE
-      : MAGNIFIER_RADIUS * 2;
-
     return {
-      x: clamp(
-        position.x,
-        Math.min(MAGNIFIER_HOTSPOT_X, viewport.width / 2),
-        Math.max(viewport.width / 2, viewport.width - (magnifierDrawWidth - MAGNIFIER_HOTSPOT_X)),
-      ),
-      y: clamp(
-        position.y,
-        Math.min(MAGNIFIER_HOTSPOT_Y, viewport.height / 2),
-        Math.max(viewport.height / 2, viewport.height - (magnifierDrawHeight - MAGNIFIER_HOTSPOT_Y)),
-      ),
+      x: clamp(position.x, 0, viewport.width),
+      y: clamp(position.y, 0, viewport.height),
     };
   }
 
