@@ -17,6 +17,7 @@
   const BUG_MAX_HEALTH = 100;
   const MAGNIFIER_DAMAGE_PER_SECOND = 35;
   const DEATH_ANIMATION_DURATION = 0.5;
+  const MOBILE_MODE_STORAGE_KEY = "bugsfield-mobile-mode";
   const SHOW_COLLISION_DEBUG = false;
   const HITBOX_OVERLAP_ALLOWANCE = 38;
   const TWO_PI = Math.PI * 2;
@@ -85,7 +86,7 @@
   let magnifierImage = null;
   let pointerPosition = null;
   let isPointerInsideCanvas = false;
-  let isMobileMode = false;
+  let isMobileMode = getInitialMobileMode();
   let mobileDragPointerId = null;
   let mobileDragClientPosition = null;
   let devicePixelRatio = window.devicePixelRatio || 1;
@@ -892,6 +893,7 @@
     canvas.style.touchAction = isMobileMode ? "none" : "auto";
     mobileDragPointerId = null;
     mobileDragClientPosition = null;
+    storeMobileMode(isMobileMode);
 
     if (isMobileMode) {
       isPointerInsideCanvas = true;
@@ -908,6 +910,50 @@
       ? "Mobile mode: on"
       : "Mobile mode: off";
     mobileModeToggle.setAttribute("aria-pressed", String(isMobileMode));
+  }
+
+  function getInitialMobileMode() {
+    const storedMobileMode = readStoredMobileMode();
+    if (storedMobileMode !== null) {
+      return storedMobileMode;
+    }
+
+    return detectMobileDevice();
+  }
+
+  function readStoredMobileMode() {
+    try {
+      const storedValue = window.localStorage.getItem(MOBILE_MODE_STORAGE_KEY);
+      if (storedValue === "true") {
+        return true;
+      }
+      if (storedValue === "false") {
+        return false;
+      }
+    } catch (error) {
+      console.warn("Failed to read mobile mode from storage.", error);
+    }
+
+    return null;
+  }
+
+  function storeMobileMode(value) {
+    try {
+      window.localStorage.setItem(MOBILE_MODE_STORAGE_KEY, String(value));
+    } catch (error) {
+      console.warn("Failed to store mobile mode.", error);
+    }
+  }
+
+  function detectMobileDevice() {
+    const userAgent = navigator.userAgent || "";
+    const isMobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
+    const hasCoarsePointer =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(any-pointer: coarse)").matches;
+    const hasTouchPoints = (navigator.maxTouchPoints || 0) > 0;
+
+    return isMobileUserAgent || (hasCoarsePointer && hasTouchPoints);
   }
 
   function updatePointerPositionFromClient(clientX, clientY) {

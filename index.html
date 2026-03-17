@@ -8,6 +8,10 @@
   </head>
   <body>
     <div id="app"></div>
-    <script src="./src/App.js"></script>
+    <script>
+      const appScript = document.createElement("script");
+      appScript.src = `./src/App.js?v=${Date.now()}`;
+      document.body.appendChild(appScript);
+    </script>
   </body>
 </html>
