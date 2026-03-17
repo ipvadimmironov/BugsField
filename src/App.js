@@ -33,7 +33,7 @@
   const BLOCKED_TURN_MAX_INTERVAL = 0.18;
   const STUCK_SPIN_UNLOCK_SECONDS = 2;
   const BUG_COUNT = 10;
-  const BUG_ZOOMS = [0.5, 0.6, 0.7, 0.8];//[1, 1.1, 0.9, 1.2];
+  const BUG_ZOOMS = [0.3, 0.4, 0.5, 0.6];//[1, 1.1, 0.9, 1.2];
   const SPAWN_ATTEMPTS = 100;
   const SPRITE_FRAMES = Array.from({ length: 13 }, (_, index) => ({
     x: index * 270,
@@ -86,6 +86,8 @@
   let pointerPosition = null;
   let isPointerInsideCanvas = false;
   let isMobileMode = false;
+  let mobileDragPointerId = null;
+  let mobileDragClientPosition = null;
   let devicePixelRatio = window.devicePixelRatio || 1;
   let viewport = {
     width: window.innerWidth,
@@ -232,16 +234,26 @@
     isPointerInsideCanvas = true;
   });
   canvas.addEventListener("pointerdown", function (event) {
-    updatePointerPositionFromClient(event.clientX, event.clientY);
-    isPointerInsideCanvas = true;
+    if (isMobileMode) {
+      startMobileDrag(event);
+      isPointerInsideCanvas = true;
+    } else {
+      updatePointerPositionFromClient(event.clientX, event.clientY);
+      isPointerInsideCanvas = true;
+    }
 
     if (event.pointerType === "touch") {
       event.preventDefault();
     }
   });
   canvas.addEventListener("pointermove", function (event) {
-    updatePointerPositionFromClient(event.clientX, event.clientY);
-    isPointerInsideCanvas = true;
+    if (isMobileMode) {
+      updateMobileDrag(event);
+      isPointerInsideCanvas = true;
+    } else {
+      updatePointerPositionFromClient(event.clientX, event.clientY);
+      isPointerInsideCanvas = true;
+    }
 
     if (event.pointerType === "touch") {
       event.preventDefault();
@@ -255,12 +267,16 @@
     pointerPosition = null;
   });
   canvas.addEventListener("pointerup", function (event) {
+    stopMobileDrag(event);
+
     if (!isMobileMode && event.pointerType === "touch") {
       isPointerInsideCanvas = false;
       pointerPosition = null;
     }
   });
-  canvas.addEventListener("pointercancel", function () {
+  canvas.addEventListener("pointercancel", function (event) {
+    stopMobileDrag(event);
+
     if (!isMobileMode) {
       isPointerInsideCanvas = false;
       pointerPosition = null;
@@ -874,10 +890,12 @@
     isMobileMode = nextValue;
     canvas.style.cursor = isMobileMode ? "default" : "none";
     canvas.style.touchAction = isMobileMode ? "none" : "auto";
+    mobileDragPointerId = null;
+    mobileDragClientPosition = null;
 
     if (isMobileMode) {
       isPointerInsideCanvas = true;
-      pointerPosition = clampPointerPosition(pointerPosition || getDefaultMagnifierPosition());
+      pointerPosition = getDefaultMagnifierPosition();
     } else if (!pointerPosition) {
       isPointerInsideCanvas = false;
     }
@@ -904,9 +922,44 @@
 
   function getDefaultMagnifierPosition() {
     return clampPointerPosition({
-      x: viewport.width * 0.5,
-      y: viewport.height * 0.5,
+      x: MAGNIFIER_HOTSPOT_X,
+      y: MAGNIFIER_HOTSPOT_Y,
     });
+  }
+
+  function startMobileDrag(event) {
+    mobileDragPointerId = event.pointerId;
+    mobileDragClientPosition = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+  }
+
+  function updateMobileDrag(event) {
+    if (mobileDragPointerId !== event.pointerId || !mobileDragClientPosition) {
+      return;
+    }
+
+    const deltaX = event.clientX - mobileDragClientPosition.x;
+    const deltaY = event.clientY - mobileDragClientPosition.y;
+
+    pointerPosition = clampPointerPosition({
+      x: (pointerPosition ? pointerPosition.x : getDefaultMagnifierPosition().x) + deltaX,
+      y: (pointerPosition ? pointerPosition.y : getDefaultMagnifierPosition().y) + deltaY,
+    });
+    mobileDragClientPosition = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+  }
+
+  function stopMobileDrag(event) {
+    if (event && mobileDragPointerId !== event.pointerId) {
+      return;
+    }
+
+    mobileDragPointerId = null;
+    mobileDragClientPosition = null;
   }
 
   function clampPointerPosition(position) {
