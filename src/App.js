@@ -52,7 +52,27 @@
   canvas.className = "game-canvas";
   canvas.setAttribute("aria-label", "Bug playground");
   canvas.style.cursor = "none";
+  canvas.style.touchAction = "auto";
+  app.style.position = "relative";
   app.replaceChildren(canvas);
+
+  const mobileModeToggle = document.createElement("button");
+  mobileModeToggle.type = "button";
+  mobileModeToggle.setAttribute("aria-pressed", "false");
+  mobileModeToggle.style.position = "fixed";
+  mobileModeToggle.style.top = "16px";
+  mobileModeToggle.style.right = "16px";
+  mobileModeToggle.style.zIndex = "10";
+  mobileModeToggle.style.padding = "10px 14px";
+  mobileModeToggle.style.border = "1px solid rgba(255, 255, 255, 0.28)";
+  mobileModeToggle.style.borderRadius = "999px";
+  mobileModeToggle.style.background = "rgba(10, 10, 14, 0.72)";
+  mobileModeToggle.style.color = "#ffffff";
+  mobileModeToggle.style.font = "600 14px system-ui, sans-serif";
+  mobileModeToggle.style.backdropFilter = "blur(10px)";
+  mobileModeToggle.style.webkitBackdropFilter = "blur(10px)";
+  mobileModeToggle.style.cursor = "pointer";
+  app.appendChild(mobileModeToggle);
 
   const context = canvas.getContext("2d");
   const sceneCanvas = document.createElement("canvas");
@@ -65,6 +85,7 @@
   let magnifierImage = null;
   let pointerPosition = null;
   let isPointerInsideCanvas = false;
+  let isMobileMode = false;
   let devicePixelRatio = window.devicePixelRatio || 1;
   let viewport = {
     width: window.innerWidth,
@@ -87,6 +108,11 @@
 
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
     sceneContext.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (pointerPosition) {
+      pointerPosition = clampPointerPosition(pointerPosition);
+    } else if (isMobileMode) {
+      pointerPosition = getDefaultMagnifierPosition();
+    }
     simulation.resize(width, height);
   }
 
@@ -199,21 +225,51 @@
   window.addEventListener("beforeunload", function () {
     window.cancelAnimationFrame(animationFrameId);
   });
-  canvas.addEventListener("mouseenter", function () {
+  canvas.addEventListener("pointerenter", function (event) {
+    if (event.pointerType === "touch") {
+      return;
+    }
     isPointerInsideCanvas = true;
   });
-  canvas.addEventListener("mousemove", function (event) {
-    const rect = canvas.getBoundingClientRect();
+  canvas.addEventListener("pointerdown", function (event) {
+    updatePointerPositionFromClient(event.clientX, event.clientY);
     isPointerInsideCanvas = true;
-    pointerPosition = {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    };
+
+    if (event.pointerType === "touch") {
+      event.preventDefault();
+    }
   });
-  canvas.addEventListener("mouseleave", function () {
+  canvas.addEventListener("pointermove", function (event) {
+    updatePointerPositionFromClient(event.clientX, event.clientY);
+    isPointerInsideCanvas = true;
+
+    if (event.pointerType === "touch") {
+      event.preventDefault();
+    }
+  });
+  canvas.addEventListener("pointerleave", function (event) {
+    if (isMobileMode || event.pointerType === "touch") {
+      return;
+    }
     isPointerInsideCanvas = false;
     pointerPosition = null;
   });
+  canvas.addEventListener("pointerup", function (event) {
+    if (!isMobileMode && event.pointerType === "touch") {
+      isPointerInsideCanvas = false;
+      pointerPosition = null;
+    }
+  });
+  canvas.addEventListener("pointercancel", function () {
+    if (!isMobileMode) {
+      isPointerInsideCanvas = false;
+      pointerPosition = null;
+    }
+  });
+  mobileModeToggle.addEventListener("click", function () {
+    setMobileMode(!isMobileMode);
+  });
+  updateMobileModeUi();
 
   Promise.all([
     loadImage(BACKGROUND_IMAGE_SRC),
@@ -812,6 +868,78 @@
     const dx = bug.position.x - pointerPosition.x;
     const dy = bug.position.y - pointerPosition.y;
     return Math.hypot(dx, dy) <= MAGNIFIER_RADIUS;
+  }
+
+  function setMobileMode(nextValue) {
+    isMobileMode = nextValue;
+    canvas.style.cursor = isMobileMode ? "default" : "none";
+    canvas.style.touchAction = isMobileMode ? "none" : "auto";
+
+    if (isMobileMode) {
+      isPointerInsideCanvas = true;
+      pointerPosition = clampPointerPosition(pointerPosition || getDefaultMagnifierPosition());
+    } else if (!pointerPosition) {
+      isPointerInsideCanvas = false;
+    }
+
+    updateMobileModeUi();
+  }
+
+  function updateMobileModeUi() {
+    mobileModeToggle.textContent = isMobileMode
+      ? "Mobile mode: on"
+      : "Mobile mode: off";
+    mobileModeToggle.setAttribute("aria-pressed", String(isMobileMode));
+  }
+
+  function updatePointerPositionFromClient(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const nextPosition = {
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+    };
+
+    pointerPosition = clampPointerPosition(nextPosition);
+  }
+
+  function getDefaultMagnifierPosition() {
+    return clampPointerPosition({
+      x: viewport.width * 0.5,
+      y: viewport.height * 0.5,
+    });
+  }
+
+  function clampPointerPosition(position) {
+    if (!position) {
+      return position;
+    }
+
+    if (!isMobileMode) {
+      return {
+        x: clamp(position.x, 0, viewport.width),
+        y: clamp(position.y, 0, viewport.height),
+      };
+    }
+
+    const magnifierDrawWidth = magnifierImage
+      ? magnifierImage.width * MAGNIFIER_SCALE
+      : MAGNIFIER_RADIUS * 2;
+    const magnifierDrawHeight = magnifierImage
+      ? magnifierImage.height * MAGNIFIER_SCALE
+      : MAGNIFIER_RADIUS * 2;
+
+    return {
+      x: clamp(
+        position.x,
+        Math.min(MAGNIFIER_HOTSPOT_X, viewport.width / 2),
+        Math.max(viewport.width / 2, viewport.width - (magnifierDrawWidth - MAGNIFIER_HOTSPOT_X)),
+      ),
+      y: clamp(
+        position.y,
+        Math.min(MAGNIFIER_HOTSPOT_Y, viewport.height / 2),
+        Math.max(viewport.height / 2, viewport.height - (magnifierDrawHeight - MAGNIFIER_HOTSPOT_Y)),
+      ),
+    };
   }
 
   function drawMagnifierView(targetContext, sourceCanvas, centerX, centerY) {
